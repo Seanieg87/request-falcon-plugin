@@ -42,18 +42,28 @@ function rf_get($settings, $key, $default) {
     return urldecode($settings[$key]);
 }
 
-// Prevent multiple listeners from running
-$selfPid = getmypid();
-$listenerPath = __FILE__;
-$existing = trim((string) @shell_exec('pgrep -f ' . escapeshellarg($listenerPath) . ' 2>/dev/null'));
-$otherPids = array_filter(
-    array_map('intval', explode("\n", $existing)),
-    function ($p) use ($selfPid) { return $p > 0 && $p !== $selfPid; }
-);
-if (!empty($otherPids)) {
-    rf_log('Startup aborted — another listener is running (PID ' . implode(',', $otherPids) . ')');
-    exit(0);
+// Prevent multiple listeners running via a PID file. This is much more
+// reliable than pgrep-based detection, which false-positives on the
+// parent shell / cron wrapper that spawned us.
+$PID_FILE = '/home/fpp/media/logs/request-falcon-listener.pid';
+
+if (file_exists($PID_FILE)) {
+    $existingPid = (int) @file_get_contents($PID_FILE);
+    // posix_kill with signal 0 tests whether the process exists without
+    // actually sending a signal. Returns true if alive, false if not.
+    if ($existingPid > 0 && function_exists('posix_kill') && posix_kill($existingPid, 0)) {
+        rf_log("Startup aborted — listener already running (PID $existingPid, our PID " . getmypid() . ")");
+        exit(0);
+    }
+    // Stale PID file — process is gone, clean it up
+    @unlink($PID_FILE);
 }
+
+// Write our PID and register cleanup on exit
+@file_put_contents($PID_FILE, (string) getmypid());
+register_shutdown_function(function () use ($PID_FILE) {
+    @unlink($PID_FILE);
+});
 
 // Signal handling for clean shutdown
 $running = true;
