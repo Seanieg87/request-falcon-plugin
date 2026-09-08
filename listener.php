@@ -2,39 +2,60 @@
 /**
  * Request Falcon listener daemon.
  *
- * Runs continuously in the background. In each polling cycle:
- *   1. Ask FPP what's currently playing (via localhost API)
- *   2. If it changed, report the new "currently playing" to Request Falcon
- *   3. If show mode is jukebox/voting AND enough time has passed since the
- *      last request check, ask Request Falcon for the next-up sequence
- *      and inject it into FPP's playlist
- *   4. Send a heartbeat so the dashboard shows this Pi as "connected"
+ * Reads plugin settings from FPP's INI file at
+ *   /home/fpp/media/config/plugin.request-falcon-plugin
+ * (FPP maintains this file automatically as the browser POSTs values
+ * via /api/plugin/request-falcon-plugin/settings/<key>).
  *
- * Launched by:
- *   - scripts/postStart.sh at FPP boot
- *   - api.php "restartListener" action from the admin page
- *
- * Stops when:
- *   - Config has listenerEnabled=false (checked each cycle)
- *   - Process is killed (kill/pkill)
+ * Loop:
+ *   1. Re-read settings each cycle (cheap — small INI file)
+ *   2. If listenerEnabled=false, exit cleanly
+ *   3. If listenerRestarting=true, clear the flag and exit (postStart
+ *      relaunches us)
+ *   4. Otherwise: report FPP status to RF, fetch next request, inject
  */
 
-require_once __DIR__ . '/lib.php';
+$PLUGIN_NAME = 'request-falcon-plugin';
+$PLUGIN_VERSION = '1.2.0';
+$CONFIG_FILE = '/home/fpp/media/config/plugin.' . $PLUGIN_NAME;
+$LOG_FILE = '/home/fpp/media/logs/request-falcon.log';
 
-// Don't run multiple copies. If another listener is running, exit cleanly.
+function rf_log($msg) {
+    global $LOG_FILE;
+    $dir = dirname($LOG_FILE);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    @file_put_contents($LOG_FILE, '[' . date('Y-m-d H:i:s') . '] ' . $msg . "\n", FILE_APPEND);
+}
+
+function rf_load_settings() {
+    global $CONFIG_FILE;
+    if (!is_readable($CONFIG_FILE)) {
+        return [];
+    }
+    $raw = @parse_ini_file($CONFIG_FILE);
+    return is_array($raw) ? $raw : [];
+}
+
+function rf_get($settings, $key, $default) {
+    if (!isset($settings[$key])) return $default;
+    // FPP URL-encodes values before writing to INI
+    return urldecode($settings[$key]);
+}
+
+// Prevent multiple listeners from running
 $selfPid = getmypid();
 $listenerPath = __FILE__;
 $existing = trim((string) @shell_exec('pgrep -f ' . escapeshellarg($listenerPath) . ' 2>/dev/null'));
 $otherPids = array_filter(
     array_map('intval', explode("\n", $existing)),
-    fn($p) => $p > 0 && $p !== $selfPid
+    function ($p) use ($selfPid) { return $p > 0 && $p !== $selfPid; }
 );
 if (!empty($otherPids)) {
-    rf_log('Listener startup aborted — another listener is already running (PID ' . implode(',', $otherPids) . ')');
+    rf_log('Startup aborted — another listener is running (PID ' . implode(',', $otherPids) . ')');
     exit(0);
 }
 
-// Handle SIGTERM/SIGINT gracefully so kill/restart is clean
+// Signal handling for clean shutdown
 $running = true;
 if (function_exists('pcntl_signal') && function_exists('pcntl_async_signals')) {
     pcntl_async_signals(true);
@@ -42,170 +63,186 @@ if (function_exists('pcntl_signal') && function_exists('pcntl_async_signals')) {
     pcntl_signal(SIGINT,  function () use (&$running) { $running = false; });
 }
 
-rf_log('Listener starting (PID ' . $selfPid . ')');
+rf_log('Listener starting (PID ' . $selfPid . ', v' . $PLUGIN_VERSION . ')');
 
-// Version reported on startup so the dashboard knows what plugin we are
-rf_api_request('POST', '/pluginVersion', [
-    'version' => '1.0.0',
-]);
+// Report plugin version to Request Falcon once at startup
+function rf_api_post($apiPath, $endpoint, $token, $body) {
+    $url = rtrim($apiPath, '/') . '/' . ltrim($endpoint, '/');
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => 'POST',
+        CURLOPT_TIMEOUT        => 10,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_HTTPHEADER     => [
+            'Content-Type: application/json',
+            'remotetoken: ' . $token,
+        ],
+        CURLOPT_POSTFIELDS => json_encode($body),
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return ['status' => (int) $status, 'body' => $raw];
+}
 
-// Loop state — track what we last reported to avoid noisy repeats
+function rf_api_get($apiPath, $endpoint, $token) {
+    $url = rtrim($apiPath, '/') . '/' . ltrim($endpoint, '/');
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 10,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_HTTPHEADER     => [
+            'remotetoken: ' . $token,
+        ],
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $decoded = json_decode((string) $raw, true);
+    return ['status' => (int) $status, 'body' => is_array($decoded) ? $decoded : null];
+}
+
+function rf_fpp_get($endpoint) {
+    $ch = curl_init('http://localhost/' . ltrim($endpoint, '/'));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 5,
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($status < 200 || $status >= 300) return null;
+    $decoded = json_decode((string) $raw, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function rf_fpp_post($endpoint, $body) {
+    $ch = curl_init('http://localhost/' . ltrim($endpoint, '/'));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => 'POST',
+        CURLOPT_TIMEOUT        => 5,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS     => json_encode($body),
+    ]);
+    curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $status >= 200 && $status < 300;
+}
+
+// Loop state
 $lastReportedPlaying = null;
 $lastFetchAt = 0;
 $lastHeartbeatAt = 0;
 $lastStatusCheckAt = 0;
+$startupReported = false;
 
 while ($running) {
-    // Re-read config each cycle so admin-page changes take effect without
-    // a listener restart (cheap — it's just reading a small JSON file).
-    $config = rf_load_config();
+    $settings = rf_load_settings();
 
-    // Owner disabled the listener — exit cleanly
-    if (empty($config['listenerEnabled'])) {
-        rf_log('Listener stopping — disabled in config');
+    $enabled = rf_get($settings, 'listenerEnabled', 'true');
+    if ($enabled !== 'true') {
+        rf_log('Listener stopping — disabled in settings');
         break;
     }
 
-    // Token not configured — sleep and check again
-    if (empty($config['token'])) {
+    $restarting = rf_get($settings, 'listenerRestarting', 'false');
+    if ($restarting === 'true') {
+        // Clear the flag by asking FPP to reset it (we could write the
+        // INI directly but it's safer to go through FPP's API to keep
+        // the encoding consistent).
+        rf_log('Restart requested — exiting so postStart can relaunch');
+        // Best-effort clear via HTTP — even if this fails, next startup
+        // won't see the flag long since postStart will run and we'll
+        // see 'true' → exit again → infinite loop. Guard against that
+        // by clearing right here via file write if HTTP fails.
+        $curl = curl_init('http://localhost/api/plugin/' . urlencode($PLUGIN_NAME) . '/settings/listenerRestarting');
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CUSTOMREQUEST  => 'POST',
+            CURLOPT_POSTFIELDS     => 'false',
+            CURLOPT_TIMEOUT        => 5,
+        ]);
+        curl_exec($curl);
+        curl_close($curl);
+        break;
+    }
+
+    $token = rf_get($settings, 'token', '');
+    $apiPath = rf_get($settings, 'apiPath', 'https://requestfalcon.com/api/plugin');
+    $remotePlaylist = rf_get($settings, 'remotePlaylist', '');
+    $interruptSchedule = rf_get($settings, 'interruptSchedule', 'false') === 'true';
+    $fetchInterval = max(1, (int) rf_get($settings, 'fetchIntervalSec', '3'));
+    $statusInterval = max(1, (int) rf_get($settings, 'statusCheckIntervalSec', '1'));
+    $verbose = rf_get($settings, 'verboseLogging', 'false') === 'true';
+
+    if (empty($token)) {
         sleep(5);
         continue;
     }
 
-    $now = time();
-    $fetchInterval  = max(1, (int) ($config['fetchIntervalSec']  ?? 3));
-    $statusInterval = max(1, (int) ($config['statusCheckIntervalSec'] ?? 1));
+    // Report plugin version once, after we have a token
+    if (!$startupReported) {
+        global $PLUGIN_VERSION;
+        rf_api_post($apiPath, 'pluginVersion', $token, ['version' => $PLUGIN_VERSION]);
+        $startupReported = true;
+    }
 
-    // ─── Step 1: check what FPP is currently playing ───────────────────
+    $now = time();
+
+    // Check FPP status, report currently_playing
     if ($now - $lastStatusCheckAt >= $statusInterval) {
         $lastStatusCheckAt = $now;
-        $fppStatus = rf_fpp_request('GET', 'api/fppd/status');
+        $fppStatus = rf_fpp_get('api/fppd/status');
         if (is_array($fppStatus)) {
-            $currentSeq = rf_extract_current_sequence($fppStatus);
-            $nextSeq    = rf_extract_next_sequence($fppStatus);
-
-            // Report "currently playing" only when it changes, so we
-            // don't spam the server with identical updates every second.
-            if ($currentSeq !== $lastReportedPlaying) {
-                if (!empty($config['verboseLogging'])) {
-                    rf_log("Currently playing changed: " . ($currentSeq ?? '(none)'));
-                }
-                rf_api_request('POST', '/updateWhatsPlaying', [
-                    'currentlyPlaying' => $currentSeq,
-                ]);
-                $lastReportedPlaying = $currentSeq;
+            $current = null;
+            if (!empty($fppStatus['current_sequence'])) {
+                $current = preg_replace('/\.fseq$/i', '', $fppStatus['current_sequence']);
             }
-
-            if ($nextSeq !== null) {
-                rf_api_request('POST', '/updateNextScheduledSequence', [
-                    'nextScheduled' => $nextSeq,
-                ]);
+            if ($current !== $lastReportedPlaying) {
+                if ($verbose) rf_log('Now playing: ' . ($current ?? '(nothing)'));
+                rf_api_post($apiPath, 'updateWhatsPlaying', $token, ['currentlyPlaying' => $current]);
+                $lastReportedPlaying = $current;
             }
         }
     }
 
-    // ─── Step 2: ask Request Falcon for the next request ──────────────
+    // Fetch next request from RF
     if ($now - $lastFetchAt >= $fetchInterval) {
         $lastFetchAt = $now;
-
-        // Get show preferences (mode: jukebox / voting / disabled)
-        $prefs = rf_api_request('GET', '/remotePreferences');
-        if ($prefs['ok'] && is_array($prefs['body'])) {
+        $prefs = rf_api_get($apiPath, 'remotePreferences', $token);
+        if ($prefs['status'] >= 200 && $prefs['status'] < 300 && is_array($prefs['body'])) {
             $mode = strtolower((string) ($prefs['body']['viewerControlMode'] ?? 'disabled'));
-
             if ($mode === 'jukebox' || $mode === 'voting') {
-                // Jukebox: /nextPlaylistInQueue — first in queue
-                // Voting:  /highestVotedPlaylist — top vote-getter
                 $endpoint = $mode === 'jukebox'
-                    ? '/nextPlaylistInQueue?updateQueue=true'
-                    : '/highestVotedPlaylist';
-
-                $nextRes = rf_api_request('GET', $endpoint);
-                if ($nextRes['ok'] && is_array($nextRes['body'])) {
+                    ? 'nextPlaylistInQueue?updateQueue=true'
+                    : 'highestVotedPlaylist';
+                $nextRes = rf_api_get($apiPath, $endpoint, $token);
+                if ($nextRes['status'] >= 200 && $nextRes['status'] < 300 && is_array($nextRes['body'])) {
                     $sequence = $nextRes['body']['nextSequence'] ?? null;
-                    if (is_string($sequence) && $sequence !== '') {
-                        rf_inject_sequence_into_fpp($sequence, $config);
+                    if (is_string($sequence) && $sequence !== '' && $remotePlaylist !== '') {
+                        $seqWithExt = preg_match('/\.fseq$/i', $sequence) ? $sequence : $sequence . '.fseq';
+                        if ($verbose) rf_log("Injecting '$seqWithExt' into '$remotePlaylist'");
+                        rf_fpp_post('api/playlist/' . rawurlencode($remotePlaylist) . '/nextItem', [
+                            'sequenceName' => $seqWithExt,
+                        ]);
                     }
                 }
             }
         }
     }
 
-    // ─── Step 3: heartbeat every 30s ──────────────────────────────────
+    // Heartbeat every 30s
     if ($now - $lastHeartbeatAt >= 30) {
         $lastHeartbeatAt = $now;
-        rf_api_request('POST', '/fppHeartbeat', []);
+        rf_api_post($apiPath, 'fppHeartbeat', $token, []);
     }
 
-    // Sleep briefly. Actual polling cadence is controlled by the
-    // per-action timestamps above; this just keeps the loop from
-    // busy-spinning.
-    usleep(500 * 1000); // 500ms
+    usleep(500 * 1000);
 }
 
-rf_log('Listener exiting cleanly (PID ' . $selfPid . ')');
+rf_log('Listener exited (PID ' . $selfPid . ')');
 exit(0);
-
-
-// ─────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────
-
-/**
- * FPP's status response contains a `current_sequence` field naming the
- * .fseq file currently playing. Strip the extension so it matches how
- * we stored the sequence name during sync.
- */
-function rf_extract_current_sequence(array $status): ?string
-{
-    $raw = $status['current_sequence'] ?? null;
-    if (!is_string($raw) || $raw === '') return null;
-    return preg_replace('/\.fseq$/i', '', $raw);
-}
-
-function rf_extract_next_sequence(array $status): ?string
-{
-    $raw = $status['next_sequence_in_playlist'] ?? null;
-    if (!is_string($raw) || $raw === '') return null;
-    return preg_replace('/\.fseq$/i', '', $raw);
-}
-
-/**
- * Ask FPP to play the given sequence next.
- *
- * If interruptSchedule is on, we use FPP's insert-at-current-position
- * pattern to break in immediately. Otherwise we queue it to play after
- * the current sequence finishes.
- *
- * The pattern is: POST /api/playlist/<remotePlaylist>/nextItem with the
- * sequence name.
- */
-function rf_inject_sequence_into_fpp(string $sequence, array $config): void
-{
-    $playlist = $config['remotePlaylist'] ?? '';
-    if ($playlist === '') {
-        if (!empty($config['verboseLogging'])) {
-            rf_log("Cannot inject '$sequence' — no remotePlaylist configured");
-        }
-        return;
-    }
-
-    // FPP expects the sequence to have its .fseq extension when inserting
-    $seqWithExt = preg_match('/\.fseq$/i', $sequence) ? $sequence : $sequence . '.fseq';
-
-    if (!empty($config['verboseLogging'])) {
-        rf_log("Injecting '$seqWithExt' into playlist '$playlist'");
-    }
-
-    // Use FPP's insert-playlist-item endpoint. Different FPP versions
-    // handle this slightly differently, but the common path is:
-    //   POST /api/playlist/<name>/nextItem
-    //   Body: { "sequenceName": "..." }
-    $res = rf_fpp_request('POST', 'api/playlist/' . rawurlencode($playlist) . '/nextItem', [
-        'sequenceName' => $seqWithExt,
-    ]);
-
-    if ($res === null && !empty($config['verboseLogging'])) {
-        rf_log("FPP rejected inject request for '$seqWithExt'");
-    }
-}

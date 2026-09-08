@@ -1,23 +1,21 @@
 <?php
-require_once __DIR__ . '/lib.php';
-
-$config = rf_load_config();
-
-// Get list of FPP playlists for the picker
-$playlists = rf_fpp_request('GET', 'api/playlists');
-if (!is_array($playlists)) {
-    $playlists = [];
-}
-
-// Plugin name for building AJAX URLs — matches the folder name FPP
-// installed us under. Fetched dynamically so it survives future renames.
-$pluginName = basename(__DIR__);
+// Request Falcon plugin admin page.
+//
+// All AJAX goes through FPP's built-in settings API:
+//   POST /api/plugin/request-falcon-plugin/settings/<key>  → save
+//   GET  /api/plugin/request-falcon-plugin/settings/<key>  → load
+// FPP persists these to an INI file at:
+//   /home/fpp/media/config/plugin.request-falcon-plugin
+// which the listener reads with parse_ini_file().
+//
+// The plugin name used in these URLs MUST match repoName in pluginInfo.json.
+// We compute it from __DIR__ to survive future renames.
 ?>
 
 <style>
-/* All CSS inlined. FPP plugin.php can't serve external .css files
-   correctly — it renders them as HTML pages instead of returning raw
-   file content. Learned this the hard way. */
+/* All CSS inlined. FPP's plugin.php always returns Content-Type: text/html,
+   so external .css files can't load — the browser rejects them for MIME
+   mismatch. Same reason JS is inlined below. */
 
 .rf-body {
     max-width: 900px;
@@ -28,14 +26,12 @@ $pluginName = basename(__DIR__);
 }
 .rf-card {
     background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.15);
     border-radius: 6px;
     padding: 1.25em 1.5em;
     margin-bottom: 1em;
 }
-.rf-header-card {
-    text-align: center;
-}
+.rf-header-card { text-align: center; }
 .rf-title {
     font-size: 1.75em;
     font-weight: 600;
@@ -51,16 +47,16 @@ $pluginName = basename(__DIR__);
     padding: 0.4em 0.8em;
     border-radius: 4px;
     font-size: 0.9em;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.05);
 }
-.rf-status-ok    { color: #4caf50; background: rgba(76, 175, 80, 0.1); }
-.rf-status-error { color: #f44336; background: rgba(244, 67, 54, 0.1); }
-.rf-status-busy  { color: #ff9800; background: rgba(255, 152, 0, 0.1); }
+.rf-status-ok    { color: #2e7d32; background: rgba(76, 175, 80, 0.12); }
+.rf-status-error { color: #c62828; background: rgba(244, 67, 54, 0.12); }
+.rf-status-busy  { color: #ef6c00; background: rgba(255, 152, 0, 0.12); }
 
 .rf-section-heading {
     font-size: 1.1em;
     font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
     padding-bottom: 0.5em;
     margin-bottom: 1em;
 }
@@ -88,7 +84,7 @@ $pluginName = basename(__DIR__);
     line-height: 1.4;
 }
 .rf-hint code {
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.08);
     padding: 0.1em 0.3em;
     border-radius: 3px;
     font-size: 0.9em;
@@ -97,8 +93,8 @@ $pluginName = basename(__DIR__);
     width: 100%;
     padding: 0.6em 0.8em;
     font-size: 0.95em;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.2);
     border-radius: 4px;
     color: inherit;
     box-sizing: border-box;
@@ -106,7 +102,7 @@ $pluginName = basename(__DIR__);
 .rf-input:focus {
     outline: none;
     border-color: #ff9800;
-    background: rgba(0, 0, 0, 0.4);
+    background: #fff;
 }
 .rf-mono {
     font-family: "SF Mono", Menlo, Consolas, monospace;
@@ -134,16 +130,16 @@ $pluginName = basename(__DIR__);
     padding: 0.55em 1.1em;
     font-size: 0.9em;
     font-weight: 500;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(0, 0, 0, 0.15);
     border-radius: 4px;
     color: inherit;
     cursor: pointer;
     transition: background-color 0.15s, border-color 0.15s;
 }
 .rf-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.15);
+    border-color: rgba(0, 0, 0, 0.25);
 }
 .rf-btn-primary {
     background: #ff9800;
@@ -157,10 +153,10 @@ $pluginName = basename(__DIR__);
 .rf-btn-danger:hover {
     background: rgba(244, 67, 54, 0.2);
     border-color: #f44336;
-    color: #f44336;
+    color: #c62828;
 }
 .rf-log {
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.08);
     padding: 1em;
     border-radius: 4px;
     max-height: 250px;
@@ -171,7 +167,6 @@ $pluginName = basename(__DIR__);
     margin-top: 1em;
     white-space: pre-wrap;
     word-break: break-word;
-    color: rgba(255, 255, 255, 0.85);
 }
 .rf-log:empty { display: none; }
 .rf-advanced summary {
@@ -180,11 +175,11 @@ $pluginName = basename(__DIR__);
     padding: 0.25em 0;
     font-size: 1em;
 }
-.rf-advanced summary:hover { color: #ff9800; }
+.rf-advanced summary:hover { color: #ef6c00; }
 .rf-advanced[open] summary {
     margin-bottom: 1em;
     padding-bottom: 0.5em;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
 }
 </style>
 
@@ -192,8 +187,8 @@ $pluginName = basename(__DIR__);
 
     <div class="rf-card rf-header-card">
         <h1 class="rf-title">Request Falcon</h1>
-        <div class="rf-subtitle">Plugin v1.1.0</div>
-        <div id="rf-listener-status" class="rf-status">Checking listener status...</div>
+        <div class="rf-subtitle">Plugin v1.2.0</div>
+        <div id="rf-listener-status" class="rf-status">Loading...</div>
     </div>
 
     <div class="rf-card">
@@ -205,7 +200,7 @@ $pluginName = basename(__DIR__);
                 Paste your show's plugin token from Request Falcon &rarr; Setup tab &rarr; Plugin tokens.
                 Each token connects this Pi to a single show.
             </p>
-            <input type="password" id="rf-token" class="rf-input" value="<?php echo htmlspecialchars($config['token']); ?>" placeholder="e.g. a UUID like 8f9e2c1a-...">
+            <input type="password" id="rf-token" class="rf-input" placeholder="e.g. a UUID like 8f9e2c1a-...">
         </div>
 
         <div class="rf-field">
@@ -215,13 +210,7 @@ $pluginName = basename(__DIR__);
             </p>
             <div class="rf-inline">
                 <select id="rf-playlist" class="rf-input">
-                    <option value="">&mdash; pick a playlist &mdash;</option>
-                    <?php foreach ($playlists as $name): ?>
-                        <option value="<?php echo htmlspecialchars($name); ?>"
-                                <?php echo ($name === $config['remotePlaylist']) ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($name); ?>
-                        </option>
-                    <?php endforeach; ?>
+                    <option value="">Loading playlists...</option>
                 </select>
                 <button id="rf-sync-btn" class="rf-btn rf-btn-primary" type="button">Sync playlist</button>
             </div>
@@ -239,7 +228,7 @@ $pluginName = basename(__DIR__);
 
         <div class="rf-field rf-field-inline">
             <label for="rf-interrupt">
-                <input type="checkbox" id="rf-interrupt" <?php echo $config['interruptSchedule'] ? 'checked' : ''; ?>>
+                <input type="checkbox" id="rf-interrupt">
                 Interrupt scheduled playlist for requests/votes
             </label>
             <p class="rf-hint">
@@ -258,9 +247,11 @@ $pluginName = basename(__DIR__);
         <div class="rf-actions">
             <button id="rf-restart-btn" class="rf-btn" type="button">Restart listener</button>
             <button id="rf-stop-btn" class="rf-btn rf-btn-danger" type="button">Stop listener</button>
-            <button id="rf-tail-btn" class="rf-btn" type="button">Show log tail</button>
         </div>
-        <pre id="rf-log-output" class="rf-log"></pre>
+        <p class="rf-hint" style="margin-top: 0.75em;">
+            To view logs, SSH into the Pi and run:
+            <code>tail -f /home/fpp/media/logs/request-falcon.log</code>
+        </p>
     </div>
 
     <details class="rf-card rf-advanced">
@@ -269,18 +260,18 @@ $pluginName = basename(__DIR__);
         <div class="rf-field">
             <label for="rf-fetch-interval">Request check interval (seconds)</label>
             <p class="rf-hint">How often the listener asks Request Falcon for the next request. Default 3.</p>
-            <input type="number" id="rf-fetch-interval" class="rf-input" min="1" max="10" step="1" value="<?php echo (int) $config['fetchIntervalSec']; ?>">
+            <input type="number" id="rf-fetch-interval" class="rf-input" min="1" max="10" step="1" value="3">
         </div>
 
         <div class="rf-field">
             <label for="rf-status-interval">FPP status check interval (seconds)</label>
             <p class="rf-hint">How often the listener checks what FPP is currently playing. Default 1.</p>
-            <input type="number" id="rf-status-interval" class="rf-input" min="1" max="10" step="1" value="<?php echo (int) $config['statusCheckIntervalSec']; ?>">
+            <input type="number" id="rf-status-interval" class="rf-input" min="1" max="10" step="1" value="1">
         </div>
 
         <div class="rf-field rf-field-inline">
             <label for="rf-verbose">
-                <input type="checkbox" id="rf-verbose" <?php echo $config['verboseLogging'] ? 'checked' : ''; ?>>
+                <input type="checkbox" id="rf-verbose">
                 Verbose logging
             </label>
             <p class="rf-hint">Log every API call. Useful for debugging, noisy otherwise.</p>
@@ -291,32 +282,35 @@ $pluginName = basename(__DIR__);
             <p class="rf-hint">
                 The Request Falcon server address. Default:
                 <code>https://requestfalcon.com/api/plugin</code>.
-                Don't change unless you know what you're doing.
             </p>
-            <input type="text" id="rf-api-path" class="rf-input rf-mono" value="<?php echo htmlspecialchars($config['apiPath']); ?>">
+            <input type="text" id="rf-api-path" class="rf-input rf-mono" value="https://requestfalcon.com/api/plugin">
         </div>
     </details>
 
 </div>
 
 <script>
-// All JS inlined. FPP plugin.php can't serve external .js files
-// correctly. This runs in the FPP admin page's jQuery-enabled context
-// but we use vanilla fetch() to avoid any jQuery version dependency.
-
 (function () {
     'use strict';
 
-    // Plugin name from PHP so URL building matches wherever FPP put us
-    var PLUGIN = <?php echo json_encode($pluginName); ?>;
+    // Plugin name — must match repoName in pluginInfo.json exactly, since
+    // this is the path FPP uses for settings storage.
+    var PLUGIN = 'request-falcon-plugin';
 
-    // AJAX endpoint URLs. Each button hits its own PHP file.
-    // Pattern: plugin.php?plugin=<name>&file=<script>.php&nopage=1
-    // The nopage=1 strips FPP's admin chrome so we get raw JSON.
-    function endpoint(scriptName) {
-        return 'plugin.php?plugin=' + encodeURIComponent(PLUGIN) +
-               '&file=' + encodeURIComponent(scriptName) + '&nopage=1';
-    }
+    // FPP settings API URLs
+    var SETTINGS_BASE = '/api/plugin/' + PLUGIN + '/settings/';
+
+    var DEFAULTS = {
+        token: '',
+        remotePlaylist: '',
+        apiPath: 'https://requestfalcon.com/api/plugin',
+        interruptSchedule: 'false',
+        fetchIntervalSec: '3',
+        statusCheckIntervalSec: '1',
+        verboseLogging: 'false',
+        listenerEnabled: 'true',
+        listenerRestarting: 'false',
+    };
 
     function $(id) { return document.getElementById(id); }
 
@@ -329,75 +323,141 @@ $pluginName = basename(__DIR__);
         if (kind === 'busy')  el.classList.add('rf-status-busy');
     }
 
-    function collectConfig() {
-        return {
-            token:                  $('rf-token').value.trim(),
-            apiPath:                $('rf-api-path').value.trim(),
-            interruptSchedule:      $('rf-interrupt').checked,
-            fetchIntervalSec:       parseInt($('rf-fetch-interval').value, 10) || 3,
-            statusCheckIntervalSec: parseInt($('rf-status-interval').value, 10) || 1,
-            verboseLogging:         $('rf-verbose').checked,
-        };
-    }
+    // ─── FPP settings helpers ────────────────────────────────────────
+    // FPP's settings API is unusual — GET returns {"<key>": "<value>"},
+    // POST takes the raw value as the body. Wrap both patterns.
 
-    function api(scriptName, opts) {
-        opts = opts || {};
-        var init = {
-            method: opts.method || 'GET',
-            headers: { 'Content-Type': 'application/json' },
-        };
-        if (opts.body) init.body = JSON.stringify(opts.body);
-        return fetch(endpoint(scriptName), init)
+    function getSetting(key) {
+        return fetch(SETTINGS_BASE + encodeURIComponent(key))
             .then(function (r) {
-                return r.text().then(function (text) {
-                    try {
-                        return JSON.parse(text);
-                    } catch (e) {
-                        return {
-                            ok: false,
-                            error: 'Server returned non-JSON: ' + text.slice(0, 200),
-                        };
-                    }
+                if (!r.ok) return DEFAULTS[key] || '';
+                return r.json().then(function (data) {
+                    // FPP wraps the value as { "<key>": "value" }
+                    var val = data[key];
+                    if (typeof val === 'string') return val;
+                    return DEFAULTS[key] || '';
                 });
             })
-            .catch(function (err) {
-                return { ok: false, error: 'Network error: ' + (err && err.message) };
-            });
+            .catch(function () { return DEFAULTS[key] || ''; });
     }
 
-    // ─── Actions ────────────────────────────────────────────────────
+    function setSetting(key, value) {
+        return fetch(SETTINGS_BASE + encodeURIComponent(key), {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: String(value),
+        }).then(function (r) {
+            return r.ok;
+        }).catch(function () { return false; });
+    }
+
+    // ─── FPP local API helpers ──────────────────────────────────────
+
+    function fppGet(path) {
+        return fetch(path).then(function (r) {
+            return r.ok ? r.json() : null;
+        }).catch(function () { return null; });
+    }
+
+    // ─── Load initial settings + populate form ──────────────────────
+
+    function loadSettings() {
+        return Promise.all([
+            getSetting('token').then(function (v) { $('rf-token').value = v; }),
+            getSetting('apiPath').then(function (v) { $('rf-api-path').value = v; }),
+            getSetting('interruptSchedule').then(function (v) { $('rf-interrupt').checked = v === 'true'; }),
+            getSetting('fetchIntervalSec').then(function (v) { $('rf-fetch-interval').value = parseInt(v, 10) || 3; }),
+            getSetting('statusCheckIntervalSec').then(function (v) { $('rf-status-interval').value = parseInt(v, 10) || 1; }),
+            getSetting('verboseLogging').then(function (v) { $('rf-verbose').checked = v === 'true'; }),
+        ]);
+    }
+
+    // Playlist picker: fetch from FPP, remember selected value from settings
+    function loadPlaylists() {
+        return Promise.all([
+            fppGet('/api/playlists'),
+            getSetting('remotePlaylist'),
+        ]).then(function (results) {
+            var playlists = Array.isArray(results[0]) ? results[0] : [];
+            var selected = results[1];
+            var picker = $('rf-playlist');
+            picker.innerHTML = '';
+
+            var placeholderOpt = document.createElement('option');
+            placeholderOpt.value = '';
+            placeholderOpt.textContent = '\u2014 pick a playlist \u2014';
+            picker.appendChild(placeholderOpt);
+
+            playlists.forEach(function (name) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                if (name === selected) opt.selected = true;
+                picker.appendChild(opt);
+            });
+        });
+    }
+
+    // ─── Save all settings back to FPP ───────────────────────────────
 
     function saveSettings() {
         var s = $('rf-save-status');
         setStatus(s, 'Saving...', 'busy');
-        api('rf_save.php', { method: 'POST', body: collectConfig() })
-            .then(function (res) {
-                if (res.ok) {
-                    setStatus(s, 'Saved', 'ok');
-                    setTimeout(function () { setStatus(s, '', null); }, 3000);
-                } else {
-                    setStatus(s, res.error || 'Save failed', 'error');
-                }
-            });
+        return Promise.all([
+            setSetting('token', $('rf-token').value.trim()),
+            setSetting('apiPath', $('rf-api-path').value.trim()),
+            setSetting('interruptSchedule', $('rf-interrupt').checked ? 'true' : 'false'),
+            setSetting('fetchIntervalSec', String(parseInt($('rf-fetch-interval').value, 10) || 3)),
+            setSetting('statusCheckIntervalSec', String(parseInt($('rf-status-interval').value, 10) || 1)),
+            setSetting('verboseLogging', $('rf-verbose').checked ? 'true' : 'false'),
+        ]).then(function (results) {
+            var allOk = results.every(function (ok) { return ok; });
+            if (allOk) {
+                setStatus(s, 'Saved', 'ok');
+                setTimeout(function () { setStatus(s, '', null); }, 3000);
+            } else {
+                setStatus(s, 'Some settings failed to save', 'error');
+            }
+            return allOk;
+        });
     }
+
+    // ─── Test connectivity: hit Request Falcon directly from browser ─
 
     function testConnectivity() {
         var s = $('rf-save-status');
         setStatus(s, 'Testing...', 'busy');
-        // Save first so test uses current form values
-        api('rf_save.php', { method: 'POST', body: collectConfig() })
-            .then(function () { return api('rf_test.php'); })
-            .then(function (res) {
-                if (res.ok) {
-                    var msg = 'Connected';
-                    if (res.showName) msg += ' — show: ' + res.showName;
-                    if (typeof res.latencyMs === 'number') msg += ' (' + res.latencyMs + 'ms)';
-                    setStatus(s, msg, 'ok');
-                } else {
-                    setStatus(s, res.error || 'Test failed', 'error');
-                }
+        saveSettings().then(function () {
+            var apiPath = $('rf-api-path').value.trim();
+            var token = $('rf-token').value.trim();
+            if (!token) {
+                setStatus(s, 'No token configured', 'error');
+                return;
+            }
+            var url = apiPath.replace(/\/$/, '') + '/q/health';
+            var startMs = Date.now();
+            fetch(url, {
+                headers: { 'remotetoken': token },
+            }).then(function (r) {
+                var latencyMs = Date.now() - startMs;
+                return r.json().then(function (data) {
+                    if (r.ok && data && data.ok) {
+                        var msg = 'Connected';
+                        if (data.showName) msg += ' \u2014 show: ' + data.showName;
+                        msg += ' (' + latencyMs + 'ms)';
+                        setStatus(s, msg, 'ok');
+                    } else {
+                        var err = (data && data.error) || ('HTTP ' + r.status);
+                        setStatus(s, 'Failed: ' + err, 'error');
+                    }
+                });
+            }).catch(function (err) {
+                setStatus(s, 'Network error: ' + (err && err.message), 'error');
             });
+        });
     }
+
+    // ─── Sync playlist: read from FPP, POST to Request Falcon ───────
 
     function syncPlaylist() {
         var picker = $('rf-playlist');
@@ -408,82 +468,122 @@ $pluginName = basename(__DIR__);
             return;
         }
         setStatus(s, 'Syncing "' + name + '"...', 'busy');
-        api('rf_save.php', { method: 'POST', body: collectConfig() })
+
+        // Save the picked playlist name first, then sync
+        setSetting('remotePlaylist', name)
+            .then(saveSettings)
             .then(function () {
-                return api('rf_sync.php', { method: 'POST', body: { playlist: name } });
+                return fppGet('/api/playlist/' + encodeURIComponent(name));
             })
-            .then(function (res) {
-                if (res.ok) {
-                    var msg = 'Synced ' + (res.total || 0) + ' sequence' +
-                              ((res.total === 1) ? '' : 's');
-                    if (res.inserted) msg += ' (' + res.inserted + ' new)';
-                    setStatus(s, msg, 'ok');
-                } else {
-                    setStatus(s, res.error || 'Sync failed', 'error');
+            .then(function (playlist) {
+                if (!playlist) {
+                    setStatus(s, 'Could not load playlist from FPP', 'error');
+                    return null;
                 }
+                var items = Array.isArray(playlist.mainPlaylist) ? playlist.mainPlaylist : [];
+                var sequences = [];
+                var index = 0;
+                items.forEach(function (item) {
+                    var type = item.type;
+                    var seqName = null, duration = null;
+                    if (type === 'both' || type === 'sequence') {
+                        if (typeof item.sequenceName === 'string' && item.sequenceName) {
+                            seqName = item.sequenceName.replace(/\.fseq$/i, '');
+                            duration = typeof item.duration === 'number' ? item.duration : null;
+                        }
+                    } else if (type === 'media') {
+                        if (typeof item.mediaName === 'string' && item.mediaName) {
+                            seqName = item.mediaName.replace(/\.(mp3|mp4|wav|ogg|flac|m4a)$/i, '');
+                        }
+                    }
+                    if (!seqName) return;
+                    sequences.push({ sequence: seqName, index: index, duration: duration });
+                    index++;
+                });
+                if (sequences.length === 0) {
+                    setStatus(s, 'Playlist has no requestable sequences', 'error');
+                    return null;
+                }
+                var apiPath = $('rf-api-path').value.trim().replace(/\/$/, '');
+                var token = $('rf-token').value.trim();
+                return fetch(apiPath + '/syncPlaylists', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'remotetoken': token,
+                    },
+                    body: JSON.stringify({ playlists: sequences }),
+                }).then(function (r) {
+                    return r.json().then(function (data) {
+                        if (r.ok && data) {
+                            var count = data.total || sequences.length;
+                            var msg = 'Synced ' + count + ' sequence' + (count === 1 ? '' : 's');
+                            if (data.inserted) msg += ' (' + data.inserted + ' new)';
+                            setStatus(s, msg, 'ok');
+                        } else {
+                            var err = (data && data.error) || ('HTTP ' + r.status);
+                            setStatus(s, 'Sync failed: ' + err, 'error');
+                        }
+                    });
+                });
+            })
+            .catch(function (err) {
+                setStatus(s, 'Error: ' + (err && err.message), 'error');
             });
     }
+
+    // ─── Listener control via settings flags ────────────────────────
 
     function restartListener() {
         var s = $('rf-save-status');
         setStatus(s, 'Restarting listener...', 'busy');
-        api('rf_listener_restart.php', { method: 'POST' })
-            .then(function (res) {
-                if (res.ok) {
-                    setStatus(s, 'Listener restarted (PID ' + res.pid + ')', 'ok');
-                    refreshStatus();
-                } else {
-                    setStatus(s, res.error || 'Restart failed', 'error');
-                }
-            });
+        // Set restarting=true, listener sees it and exits; postStart-like
+        // mechanism should relaunch. Also ensure enabled=true.
+        Promise.all([
+            setSetting('listenerEnabled', 'true'),
+            setSetting('listenerRestarting', 'true'),
+        ]).then(function () {
+            setStatus(s, 'Restart requested. May take a few seconds.', 'ok');
+            setTimeout(refreshListenerStatus, 3000);
+        });
     }
 
     function stopListener() {
         if (!confirm("Stop the listener? It won't restart until you click Restart.")) return;
         var s = $('rf-save-status');
         setStatus(s, 'Stopping...', 'busy');
-        api('rf_listener_stop.php', { method: 'POST' })
-            .then(function (res) {
-                if (res.ok) {
-                    setStatus(s, 'Listener stopped', 'ok');
-                    refreshStatus();
-                } else {
-                    setStatus(s, res.error || 'Stop failed', 'error');
-                }
-            });
-    }
-
-    function tailLog() {
-        var out = $('rf-log-output');
-        out.textContent = 'Loading log...';
-        api('rf_tail_log.php').then(function (res) {
-            if (res.ok && Array.isArray(res.lines)) {
-                out.textContent = res.lines.length ? res.lines.join('\n') : '(log is empty)';
-            } else {
-                out.textContent = res.error || 'Could not read log';
-            }
+        setSetting('listenerEnabled', 'false').then(function () {
+            setStatus(s, 'Listener stop requested', 'ok');
+            setTimeout(refreshListenerStatus, 3000);
         });
     }
 
-    function refreshStatus() {
+    function refreshListenerStatus() {
+        // Best proxy for "is the listener running" without a custom endpoint:
+        // check whether listenerEnabled is true. Not perfectly accurate (a
+        // crashed listener with enabled=true would look "running"), but
+        // FPP doesn't expose the process table directly to JS.
         var el = $('rf-listener-status');
-        api('rf_listener_status.php').then(function (res) {
-            if (res.ok) {
-                if (res.running) {
-                    el.textContent = 'Listener running (PID ' + res.pid + ')';
-                    el.className = 'rf-status rf-status-ok';
-                } else {
-                    el.textContent = 'Listener not running';
-                    el.className = 'rf-status rf-status-error';
-                }
-            } else {
-                el.textContent = 'Could not check listener status';
+        Promise.all([
+            getSetting('listenerEnabled'),
+            getSetting('listenerRestarting'),
+        ]).then(function (results) {
+            var enabled = results[0] === 'true';
+            var restarting = results[1] === 'true';
+            if (!enabled) {
+                el.textContent = 'Listener stopped';
                 el.className = 'rf-status rf-status-error';
+            } else if (restarting) {
+                el.textContent = 'Listener restarting...';
+                el.className = 'rf-status rf-status-busy';
+            } else {
+                el.textContent = 'Listener enabled';
+                el.className = 'rf-status rf-status-ok';
             }
         });
     }
 
-    // ─── Wire up ────────────────────────────────────────────────────
+    // ─── Init ────────────────────────────────────────────────────────
 
     function init() {
         var el;
@@ -492,10 +592,11 @@ $pluginName = basename(__DIR__);
         if ((el = $('rf-sync-btn')))    el.addEventListener('click', syncPlaylist);
         if ((el = $('rf-restart-btn'))) el.addEventListener('click', restartListener);
         if ((el = $('rf-stop-btn')))    el.addEventListener('click', stopListener);
-        if ((el = $('rf-tail-btn')))    el.addEventListener('click', tailLog);
 
-        refreshStatus();
-        setInterval(refreshStatus, 10000);
+        loadSettings();
+        loadPlaylists();
+        refreshListenerStatus();
+        setInterval(refreshListenerStatus, 10000);
     }
 
     if (document.readyState === 'loading') {
