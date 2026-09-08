@@ -143,6 +143,46 @@ function rf_fpp_post($endpoint, $body) {
     return $status >= 200 && $status < 300;
 }
 
+/**
+ * Inject a requested sequence into FPP's currently-scheduled playlist.
+ *
+ * Uses FPP's Insert Playlist command endpoint. The correct path is:
+ *   GET /api/command/Insert Playlist After Current/<playlist>/<start>/<end>
+ * or for interrupt mode:
+ *   GET /api/command/Insert Playlist Immediate/<playlist>/<start>/<end>
+ *
+ * Both start and end refer to the sequence's index within the playlist —
+ * to inject a single sequence, they're the same value.
+ *
+ * Returns true on HTTP 2xx, false otherwise. Logs errors when verbose.
+ */
+function rf_inject_into_fpp(string $playlist, int $index, bool $immediate, bool $verbose): bool
+{
+    $command = $immediate ? 'Insert Playlist Immediate' : 'Insert Playlist After Current';
+    $url = 'http://localhost/api/command/'
+         . rawurlencode($command) . '/'
+         . rawurlencode($playlist) . '/'
+         . $index . '/' . $index;
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 5,
+    ]);
+    $body = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($status < 200 || $status >= 300) {
+        rf_log("FPP inject failed: HTTP $status — url: $url");
+        return false;
+    }
+    if ($verbose) {
+        rf_log("FPP inject OK (HTTP $status) — response: " . substr((string) $body, 0, 100));
+    }
+    return true;
+}
+
 // Loop state
 $lastReportedPlaying = null;
 $lastFetchAt = 0;
@@ -233,12 +273,16 @@ while ($running) {
                 $nextRes = rf_api_get($apiPath, $endpoint, $token);
                 if ($nextRes['status'] >= 200 && $nextRes['status'] < 300 && is_array($nextRes['body'])) {
                     $sequence = $nextRes['body']['nextSequence'] ?? null;
-                    if (is_string($sequence) && $sequence !== '' && $remotePlaylist !== '') {
-                        $seqWithExt = preg_match('/\.fseq$/i', $sequence) ? $sequence : $sequence . '.fseq';
-                        if ($verbose) rf_log("Injecting '$seqWithExt' into '$remotePlaylist'");
-                        rf_fpp_post('api/playlist/' . rawurlencode($remotePlaylist) . '/nextItem', [
-                            'sequenceName' => $seqWithExt,
-                        ]);
+                    // Server also returns playlistIndex — needed because FPP's
+                    // "Insert Playlist" command works by index, not sequence name.
+                    $playlistIndex = $nextRes['body']['playlistIndex'] ?? null;
+                    if (is_string($sequence) && $sequence !== ''
+                        && $remotePlaylist !== ''
+                        && is_int($playlistIndex)) {
+                        if ($verbose) rf_log("Injecting '$sequence' (index $playlistIndex) into '$remotePlaylist' (interrupt=" . ($interruptSchedule ? 'yes' : 'no') . ')');
+                        rf_inject_into_fpp($remotePlaylist, $playlistIndex, $interruptSchedule, $verbose);
+                    } elseif (is_string($sequence) && $sequence !== '' && !is_int($playlistIndex)) {
+                        rf_log("Cannot inject '$sequence' — server did not return a playlistIndex");
                     }
                 }
             }
