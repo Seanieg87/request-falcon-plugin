@@ -1,0 +1,23 @@
+{
+  "repoName": "request-falcon-plugin",
+  "name": "Request Falcon",
+  "author": "Sean Grant",
+  "description": "Connects your Falcon Player to Request Falcon (https://requestfalcon.com), letting viewers request or vote on the songs your light show plays.",
+  "homeURL": "https://github.com/Seanieg87/request-falcon-plugin",
+  "srcURL": "https://github.com/Seanieg87/request-falcon-plugin.git",
+  "bugURL": "https://github.com/Seanieg87/request-falcon-plugin/issues",
+  "allowUpdates": 1,
+  "versions": [
+    {
+      "minFPPVersion": "8.0",
+      "maxFPPVersion": "0",
+      "branch": "main",
+      "sha": "",
+      "dependencies": {
+        "plugins": [],
+        "packages": [],
+        "scripts": []
+      }
+    }
+  ]
+}

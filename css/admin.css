@@ -1,0 +1,227 @@
+/* Request Falcon plugin — admin config page styling.
+ *
+ * Kept simple and legible. Uses FPP's default page background/font so
+ * we blend into the FPP UI rather than fighting it. If FPP's theme
+ * changes, most colors here still work because they're relative to
+ * the container background.
+ */
+
+.rf-plugin-body {
+  max-width: 900px;
+  margin: 1em auto;
+  padding: 0 1em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+.rf-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 1.25em 1.5em;
+  margin-bottom: 1em;
+}
+
+.rf-header-card {
+  text-align: center;
+  padding: 1.5em;
+}
+
+.rf-title {
+  font-size: 1.75em;
+  font-weight: 600;
+  margin: 0 0 0.25em 0;
+}
+
+.rf-subtitle {
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-bottom: 0.75em;
+}
+
+.rf-status {
+  display: inline-block;
+  padding: 0.4em 0.8em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.rf-status-ok {
+  color: #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.rf-status-error {
+  color: #f44336;
+  background: rgba(244, 67, 54, 0.1);
+}
+
+.rf-status-busy {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.1);
+}
+
+.rf-section-heading {
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.5em;
+  margin-bottom: 1em;
+}
+
+.rf-field {
+  margin-bottom: 1.5em;
+}
+
+.rf-field label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25em;
+  font-size: 0.95em;
+}
+
+.rf-field-inline label {
+  display: inline;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.rf-field-inline input[type="checkbox"] {
+  margin-right: 0.5em;
+  transform: scale(1.2);
+  vertical-align: middle;
+}
+
+.rf-hint {
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin: 0.25em 0 0.75em 0;
+  line-height: 1.4;
+}
+
+.rf-hint code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.rf-input {
+  width: 100%;
+  padding: 0.6em 0.8em;
+  font-size: 0.95em;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.rf-input:focus {
+  outline: none;
+  border-color: #ff9800;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.rf-mono {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+.rf-inline {
+  display: flex;
+  gap: 0.5em;
+  align-items: stretch;
+}
+
+.rf-inline select.rf-input {
+  flex: 1;
+}
+
+.rf-inline button {
+  flex-shrink: 0;
+}
+
+.rf-actions {
+  display: flex;
+  gap: 0.75em;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 1em;
+}
+
+.rf-inline-status {
+  font-size: 0.9em;
+  margin-left: 0.5em;
+}
+
+.rf-btn {
+  padding: 0.55em 1.1em;
+  font-size: 0.9em;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.rf-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.rf-btn-primary {
+  background: #ff9800;
+  border-color: #ff9800;
+  color: #1a1a1a;
+}
+
+.rf-btn-primary:hover {
+  background: #ffb040;
+  border-color: #ffb040;
+}
+
+.rf-btn-danger:hover {
+  background: rgba(244, 67, 54, 0.2);
+  border-color: #f44336;
+  color: #f44336;
+}
+
+.rf-log {
+  background: rgba(0, 0, 0, 0.5);
+  padding: 1em;
+  border-radius: 4px;
+  max-height: 250px;
+  overflow-y: auto;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  line-height: 1.4;
+  margin-top: 1em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.rf-log:empty {
+  display: none;
+}
+
+.rf-advanced summary {
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.25em 0;
+  font-size: 1em;
+}
+
+.rf-advanced summary:hover {
+  color: #ff9800;
+}
+
+.rf-advanced[open] summary {
+  margin-bottom: 1em;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
