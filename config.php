@@ -559,26 +559,39 @@
     }
 
     function refreshListenerStatus() {
-        // Best proxy for "is the listener running" without a custom endpoint:
-        // check whether listenerEnabled is true. Not perfectly accurate (a
-        // crashed listener with enabled=true would look "running"), but
-        // FPP doesn't expose the process table directly to JS.
+        // Check the heartbeat timestamp the listener writes every loop
+        // iteration. Fresh (<15 sec old) means it's actually running.
+        // Compare against enabled flag to distinguish stopped vs crashed.
         var el = $('rf-listener-status');
         Promise.all([
             getSetting('listenerEnabled'),
             getSetting('listenerRestarting'),
+            getSetting('listenerLastHeartbeat'),
         ]).then(function (results) {
             var enabled = results[0] === 'true';
             var restarting = results[1] === 'true';
+            var heartbeat = parseInt(results[2] || '0', 10);
+            var nowSec = Math.floor(Date.now() / 1000);
+            var heartbeatAge = nowSec - heartbeat;
+            // Consider alive if heartbeat is within 15 seconds. Listener
+            // loops every 1 sec so this gives plenty of margin.
+            var alive = heartbeat > 0 && heartbeatAge < 15;
+
             if (!enabled) {
-                el.textContent = 'Listener stopped';
+                el.textContent = 'Listener stopped (disabled in settings)';
                 el.className = 'rf-status rf-status-error';
             } else if (restarting) {
                 el.textContent = 'Listener restarting...';
                 el.className = 'rf-status rf-status-busy';
-            } else {
-                el.textContent = 'Listener enabled';
+            } else if (alive) {
+                el.textContent = 'Listener running (last heartbeat ' + heartbeatAge + 's ago)';
                 el.className = 'rf-status rf-status-ok';
+            } else if (heartbeat === 0) {
+                el.textContent = 'Listener enabled but never started — try Restart';
+                el.className = 'rf-status rf-status-error';
+            } else {
+                el.textContent = 'Listener not responding (last heartbeat ' + heartbeatAge + 's ago) — likely crashed';
+                el.className = 'rf-status rf-status-error';
             }
         });
     }
@@ -596,7 +609,7 @@
         loadSettings();
         loadPlaylists();
         refreshListenerStatus();
-        setInterval(refreshListenerStatus, 10000);
+        setInterval(refreshListenerStatus, 5000);
     }
 
     if (document.readyState === 'loading') {

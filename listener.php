@@ -73,7 +73,7 @@ if (function_exists('pcntl_signal') && function_exists('pcntl_async_signals')) {
     pcntl_signal(SIGINT,  function () use (&$running) { $running = false; });
 }
 
-rf_log('Listener starting (PID ' . $selfPid . ', v' . $PLUGIN_VERSION . ')');
+rf_log('Listener starting (PID ' . getmypid() . ', v' . $PLUGIN_VERSION . ')');
 
 // Report plugin version to Request Falcon once at startup
 function rf_api_post($apiPath, $endpoint, $token, $body) {
@@ -193,6 +193,22 @@ $startupReported = false;
 while ($running) {
     $settings = rf_load_settings();
 
+    // Heartbeat — write current unix timestamp to a setting the config
+    // page reads to determine whether the listener is actually alive
+    // (independent of the listenerEnabled flag). Written every loop
+    // iteration (~1 sec) so the config page can detect crashes/hangs
+    // by comparing the timestamp to now.
+    $curl = curl_init('http://localhost/api/plugin/' . urlencode($PLUGIN_NAME) . '/settings/listenerLastHeartbeat');
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => 'POST',
+        CURLOPT_TIMEOUT        => 2,
+        CURLOPT_HTTPHEADER     => ['Content-Type: text/plain'],
+        CURLOPT_POSTFIELDS     => (string) time(),
+    ]);
+    curl_exec($curl);
+    curl_close($curl);
+
     $enabled = rf_get($settings, 'listenerEnabled', 'true');
     if ($enabled !== 'true') {
         rf_log('Listener stopping — disabled in settings');
@@ -298,5 +314,5 @@ while ($running) {
     usleep(500 * 1000);
 }
 
-rf_log('Listener exited (PID ' . $selfPid . ')');
+rf_log('Listener exited (PID ' . getmypid() . ')');
 exit(0);
